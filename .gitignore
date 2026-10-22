@@ -1,0 +1,32 @@
+# dependencies
+node_modules
+
+# next
+.next
+out
+next-env.d.ts
+*.tsbuildinfo
+
+# env — contains app secret, access token, OpenAI key
+.env
+.env.local
+.env*.local
+
+# downloaded data: posts, comments, insights, transcripts, saved tokens
+data/
+
+# logs
+logs
+*.log
+npm-debug.log*
+
+# editor / os
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+
+# elastic beanstalk
+.elasticbeanstalk/*
+!.elasticbeanstalk/*.cfg.yml
+!.elasticbeanstalk/*.global.yml
