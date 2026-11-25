@@ -55,4 +55,4 @@ Instagram API посты, комментарии и статистику **то�
 
 ## Контакт
 
-mathiasmichaelweiss@gmail.com
+<ВАШ_EMAIL>

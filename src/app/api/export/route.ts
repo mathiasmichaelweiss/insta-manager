@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
+import { peekAccount } from "@/lib/account";
+import { readAccountInsights, sumRecent } from "@/lib/accountInsights";
 import { fail } from "@/lib/api";
 import { buildBrief } from "@/lib/brief";
+import { loadMetrics } from "@/lib/metrics";
 import { listIds, paths, readJson } from "@/lib/store";
 import type {
   CommentsFile,
@@ -27,6 +30,7 @@ const KINDS = [
   "dm-topics",
   "all-messages",
   "brief",
+  "everything",
 ] as const;
 type Kind = (typeof KINDS)[number];
 
@@ -40,6 +44,7 @@ const BULK: Record<string, boolean> = {
   "dm-topics": true,
   "all-messages": true,
   brief: true,
+  everything: true,
 };
 
 function download(filename: string, payload: unknown) {
@@ -119,6 +124,58 @@ export async function GET(request: Request) {
         const brief = await buildBrief(draftId, params.get("dm") !== "0");
         const name = draftId ? `brief-draft-${draftId.slice(0, 8)}` : `brief-${stamp}`;
         return download(`${name}.json`, brief);
+      }
+
+      // Every post with everything saved about it, in full. No direct messages.
+      case "everything": {
+        const [account, index, metrics, followers] = await Promise.all([
+          peekAccount(),
+          readJson<MediaIndex>(paths.media),
+          loadMetrics(),
+          readAccountInsights(),
+        ]);
+        if (!index) return missing("Посты");
+
+        const byId = new Map(metrics.rows.map((row) => [row.mediaId, row]));
+        const posts = [];
+        for (const media of index.media) {
+          const [insights, comments, transcript] = await Promise.all([
+            readJson<InsightsFile>(paths.insights(media.id)),
+            readJson<CommentsFile>(paths.comments(media.id)),
+            readJson<TranscriptFile>(paths.transcript(media.id)),
+          ]);
+          posts.push({
+            media,
+            metrics: byId.get(media.id) ?? null,
+            insights,
+            comments,
+            transcript,
+          });
+        }
+
+        return download(`everything-${stamp}.json`, {
+          exportedAt: new Date().toISOString(),
+          // Picked field by field: the stored account also holds the access token.
+          account: {
+            username: account?.username,
+            name: account?.name,
+            accountType: account?.accountType,
+            followers: account?.followersCount,
+            newFollowers30d: followers ? sumRecent(followers.followerCount, 30) : undefined,
+            newFollowers7d: followers ? sumRecent(followers.followerCount, 7) : undefined,
+          },
+          benchmarks: {
+            medianReach: metrics.medianReach,
+            medianRetention: metrics.medianRetention,
+          },
+          totals: {
+            posts: posts.length,
+            withInsights: posts.filter((p) => p.insights).length,
+            withComments: posts.filter((p) => p.comments).length,
+            withTranscript: posts.filter((p) => p.transcript).length,
+          },
+          posts,
+        });
       }
 
       case "comments": {

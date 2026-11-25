@@ -44,7 +44,8 @@ export function useSync(onFinish?: () => void | Promise<void>) {
   useEffect(() => () => abort.current?.abort(), []);
 
   const start = useCallback(
-    async (kind: SyncKind, url: string, unit: (n: number) => string) => {
+    /** Resolves true once the run has finished, false if it was stopped or failed. */
+    async (kind: SyncKind, url: string, unit: (n: number) => string): Promise<boolean> => {
       abort.current?.abort();
       const controller = new AbortController();
       abort.current = controller;
@@ -95,12 +96,14 @@ export function useSync(onFinish?: () => void | Promise<void>) {
           }
         }
         await onFinish?.();
+        return true;
       } catch (err) {
         if ((err as Error).name === "AbortError") {
           setState(IDLE);
-          return;
+          return false;
         }
         setState({ ...IDLE, error: err instanceof Error ? err.message : String(err) });
+        return false;
       }
     },
     [onFinish],

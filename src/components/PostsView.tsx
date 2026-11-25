@@ -111,6 +111,10 @@ export function PostsView() {
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: "timestamp", desc: true });
   const [plan, setPlan] = useState<TranscribePlan | null>(null);
+  /** Set when the plan on screen belongs to «Выгрузить всё», not plain transcription. */
+  const [exportAfter, setExportAfter] = useState(false);
+  /** True for the whole «Выгрузить всё» chain, including the gaps between its runs. */
+  const [exporting, setExporting] = useState(false);
 
   const loadSide = useCallback(async () => {
     const [statusRes, metricsRes, followersRes] = await Promise.all([
@@ -172,18 +176,45 @@ export function PostsView() {
   const run = (kind: SyncKind) => {
     setPlan(null);
     setError(null);
-    void start(kind, JOBS[kind].url, JOBS[kind].unit);
+    return start(kind, JOBS[kind].url, JOBS[kind].unit);
+  };
+
+  const downloadEverything = () => {
+    window.location.href = "/api/export?kind=everything";
   };
 
   /** Transcription costs real money, so show the bill before spending it. */
-  async function askTranscripts() {
+  async function askTranscripts(thenExport = false) {
     setError(null);
+    setExportAfter(thenExport);
     try {
       const res = await fetch("/api/sync/transcripts");
       if (!res.ok) throw new Error(await errorText(res));
-      setPlan((await res.json()) as TranscribePlan);
+      const next = (await res.json()) as TranscribePlan;
+      // Nothing to transcribe means nothing to pay for — no reason to ask.
+      if (thenExport && next.pending === 0) return void refreshAndExport(false);
+      setPlan(next);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  /**
+   * Optionally transcribes whatever is missing, re-pulls every post's insights and
+   * comments, then hands over one file with everything. Transcripts go first: a
+   * Reel's retention needs its duration, and that only comes from the transcript. Stops without a download if a run is cancelled
+   * or fails outright; a run that hit the Instagram limit still counts as finished
+   * and exports what was saved, with the warning left on screen.
+   */
+  async function refreshAndExport(transcribe: boolean) {
+    setExporting(true);
+    try {
+      if (transcribe && !(await run("transcripts"))) return;
+      if (!(await run("insights"))) return;
+      if (!(await run("comments"))) return;
+      downloadEverything();
+    } finally {
+      setExporting(false);
     }
   }
 
@@ -258,16 +289,16 @@ export function PostsView() {
           <p className="sub">{summary}</p>
         </div>
         <div className="row spacer">
-          <button onClick={() => void load(true)} disabled={loading || sync.running}>
+          <button onClick={() => void load(true)} disabled={loading || sync.running || exporting}>
             {loading ? <span className="spin" /> : null} Обновить список
           </button>
-          <button onClick={() => run("insights")} disabled={sync.running}>
+          <button onClick={() => void run("insights")} disabled={sync.running || exporting}>
             {JOBS.insights.button}
           </button>
-          <button onClick={() => void askTranscripts()} disabled={sync.running}>
+          <button onClick={() => void askTranscripts()} disabled={sync.running || exporting}>
             {JOBS.transcripts.button}
           </button>
-          <button className="primary" onClick={() => run("comments")} disabled={sync.running}>
+          <button className="primary" onClick={() => void run("comments")} disabled={sync.running || exporting}>
             {sync.running ? <span className="spin" /> : null} {JOBS.comments.button}
           </button>
         </div>
@@ -293,9 +324,20 @@ export function PostsView() {
           )}
           <div className="row" style={{ marginTop: 12 }}>
             {plan.pending > 0 ? (
-              <button className="primary" onClick={() => run("transcripts")}>
-                Расшифровать
-              </button>
+              exportAfter ? (
+                <>
+                  <button className="primary" onClick={() => void refreshAndExport(true)}>
+                    Расшифровать и выгрузить
+                  </button>
+                  <button onClick={() => void refreshAndExport(false)}>
+                    Выгрузить без расшифровки
+                  </button>
+                </>
+              ) : (
+                <button className="primary" onClick={() => void run("transcripts")}>
+                  Расшифровать
+                </button>
+              )
             ) : null}
             <button onClick={() => setPlan(null)}>Отмена</button>
           </div>
@@ -352,6 +394,14 @@ export function PostsView() {
           <a className="btn" href="/api/export?kind=all-transcripts">
             Транскрипты
           </a>
+          <button
+            className="primary"
+            onClick={() => void askTranscripts(true)}
+            disabled={sync.running || exporting}
+            title="Расшифровать недостающие видео, заново загрузить статистику и комментарии и скачать один JSON со всеми постами, статистикой, комментариями и транскриптами"
+          >
+            Выгрузить всё
+          </button>
         </div>
       </div>
 
